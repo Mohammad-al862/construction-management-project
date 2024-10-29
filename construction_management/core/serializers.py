@@ -1,5 +1,5 @@
-from rest_framework import serializers
 from django.contrib.auth.models import User
+from rest_framework import serializers
 from .models import Manager, Supervisor, Project, Task
  
 class UserSerializer(serializers.ModelSerializer):
@@ -20,9 +20,9 @@ class SupervisorSerializer(serializers.ModelSerializer):
 class ProjectSerializer(serializers.ModelSerializer):
     class Meta:
         model = Project
-        fields = ['id', 'name', 'location', 'budget', 'timeline', 'created_by']
+        fields = ['id', 'name', 'location', 'budget', 'timeline', 'supervisor']
  
 class TaskSerializer(serializers.ModelSerializer):
     class Meta:
         model = Task
-        fields = ['id', 'project', 'name', 'description', 'deadline', 'phase']
+        fields = ['id', 'project', 'name', 'workers', 'task_picture', 'estimated_time', 'description', 'deadline']
