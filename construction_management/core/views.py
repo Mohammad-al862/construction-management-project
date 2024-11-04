@@ -1,127 +1,195 @@
+from django.shortcuts import render
+from django.http import JsonResponse
+from rest_framework import permissions, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework import status
-from django.contrib.auth.models import User
-from django.contrib.auth import authenticate
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from .models import Manager, Supervisor, Project, Task, Worker
+from .serializers import UserSerializer, ProjectSerializer, TaskSerializer, WorkerSerializer, SupervisorSerializer, ManagerSerializer
+from django.contrib.auth import authenticate, login, logout
 from rest_framework.authtoken.models import Token
-from .models import Manager, Supervisor, Project, Task
-from .serializers import UserSerializer, ManagerSerializer, SupervisorSerializer, ProjectSerializer, TaskSerializer
  
 @api_view(['POST'])
-@permission_classes([AllowAny])
-def register_user(request):
-    username = request.data.get('username')
-    email = request.data.get('email')
-    password = request.data.get('password')
-    role = request.data.get('role')
- 
-    if User.objects.filter(username=username).exists():
-        return Response({'error': 'Username already exists.'}, status=status.HTTP_400_BAD_REQUEST)
- 
-    user = User.objects.create_user(username=username, email=email, password=password)
- 
-    if role == 'Manager':
-        Manager.objects.create(user=user)
-    elif role == 'Supervisor':
-        Supervisor.objects.create(user=user)
- 
-    token = Token.objects.create(user=user)
-    return Response({'message': 'User registered successfully.', 'token': token.key}, status=status.HTTP_201_CREATED)
- 
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def login_user(request):
-    username = request.data.get('username')
-    password = request.data.get('password')
- 
-    user = authenticate(username=username, password=password)
-    if user is not None:
+def register(request):
+    """Register a new Manager or Supervisor."""
+    serializer = UserSerializer(data=request.data)
+    if serializer.is_valid():
+        user = serializer.save()
         token, created = Token.objects.get_or_create(user=user)
-        return Response({'message': 'User login successful.', 'token': token.key}, status=status.HTTP_200_OK)
-    return Response({'error': 'Invalid Credentials.'}, status=status.HTTP_401_UNAUTHORIZED)
+        return Response({'message': 'User created', 'token': token.key}, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
  
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def logout_user(request):
-    request.user.auth_token.delete()
-    return Response({'message': 'User logged out successfully.'}, status=status.HTTP_200_OK)
+def login_view(request):
+    """Login a user."""
+    username = request.data.get('username')
+    password = request.data.get('password')
+    user = authenticate(request, username=username, password=password)
+    if user is not None:
+        login(request, user)
+        token, created = Token.objects.get_or_create(user=user)
+        return Response({'message': 'Login successful', 'token': token.key})
+    return Response({'message': 'Invalid credentials'}, status=status.HTTP_400_BAD_REQUEST)
+ 
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def logout_view(request):
+    """Logout a user."""
+    logout(request)
+    return Response({'message': 'Logout successful'})
  
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([permissions.IsAuthenticated])
 def my_profile(request):
-    user = request.user
-    user_data = UserSerializer(user).data
- 
-    manager = getattr(user, 'manager', None)
-    supervisor = getattr(user, 'supervisor', None)
- 
-    profile_data = {
-        'message': 'Profile retrieved successfully.',
-        'user': user_data
+    """Get the logged-in user's profile details."""
+    user_data = {
+        "username": request.user.username,
+        "email": request.user.email,  # Ensure user email is available
     }
  
-    if manager:
-        manager_data = ManagerSerializer(manager).data
-        profile_data['manager'] = manager_data
-    elif supervisor:
-        supervisor_data = SupervisorSerializer(supervisor).data
-        profile_data['supervisor'] = supervisor_data
+    if hasattr(request.user, 'manager'):
+        manager = request.user.manager
+        serializer = ManagerSerializer(manager)
+        return Response({**user_data, **serializer.data})  # Combine user and manager data
  
-    return Response(profile_data, status=status.HTTP_200_OK)
+    elif hasattr(request.user, 'supervisor'):
+        supervisor = request.user.supervisor
+        serializer = SupervisorSerializer(supervisor)
+        return Response({**user_data, **serializer.data})  # Combine user and supervisor data
+ 
+    return Response({'message': 'Profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+ 
+ 
  
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([permissions.IsAuthenticated])
 def create_project(request):
+    """Create a new project (Managers only)."""
     if not hasattr(request.user, 'manager'):
-        return Response({'error': 'Only managers can create projects.'}, status=status.HTTP_403_FORBIDDEN)
- 
+        return Response({'message': 'You do not have permission to create a project.'}, status=status.HTTP_403_FORBIDDEN)
+
     serializer = ProjectSerializer(data=request.data)
     if serializer.is_valid():
-        serializer.save(created_by=request.user.manager)
-        return Response({'message': 'Project created successfully.', 'project': serializer.data}, status=status.HTTP_201_CREATED)
+        project = serializer.save(created_by=request.user.manager)  # Set created_by to the current manager
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
- 
+
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def list_projects(request):
-    projects = Project.objects.filter(created_by=request.user.manager)
+@permission_classes([permissions.IsAuthenticated])
+def get_projects(request):
+    """Get a list of projects (Managers only)."""
+    if not hasattr(request.user, 'manager'):
+        return Response({'message': 'You do not have permission to view projects.'}, status=status.HTTP_403_FORBIDDEN)
+ 
+    projects = Project.objects.all()
     serializer = ProjectSerializer(projects, many=True)
-    return Response({'message': 'Projects retrieved successfully.', 'projects': serializer.data}, status=status.HTTP_200_OK)
- 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def retrieve_project(request, project_id):
-    try:
-        project = Project.objects.get(id=project_id, created_by=request.user.manager)
-        serializer = ProjectSerializer(project)
-        return Response({'message': 'Project retrieved successfully.', 'project': serializer.data}, status=status.HTTP_200_OK)
-    except Project.DoesNotExist:
-        return Response({'error': 'Project not found.'}, status=status.HTTP_404_NOT_FOUND)
+    return Response(serializer.data)
  
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([permissions.IsAuthenticated])
 def create_task(request):
+    """Create a new task (Supervisors only)."""
+    if not hasattr(request.user, 'supervisor'):
+        return Response({'message': 'You do not have permission to create a task.'}, status=status.HTTP_403_FORBIDDEN)
+ 
     serializer = TaskSerializer(data=request.data)
     if serializer.is_valid():
-        try:
-            project = Project.objects.get(id=request.data['project'])
-            if project.created_by != request.user.manager:
-                return Response({'error': 'You do not have permission to add tasks to this project.'}, status=status.HTTP_403_FORBIDDEN)
-            serializer.save()
-            return Response({'message': 'Task created successfully.', 'task': serializer.data}, status=status.HTTP_201_CREATED)
-        except Project.DoesNotExist:
-            return Response({'error': 'Project not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
  
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def list_tasks(request, project_id):
-    try:
-        project = Project.objects.get(id=project_id, created_by=request.user.manager)
-        tasks = project.tasks.all()
-        serializer = TaskSerializer(tasks, many=True)
-        return Response({'message': 'Tasks retrieved successfully.', 'tasks': serializer.data}, status=status.HTTP_200_OK)
-    except Project.DoesNotExist:
-        return Response({'error': 'Project not found.'}, status=status.HTTP_404_NOT_FOUND)
+@permission_classes([permissions.IsAuthenticated])
+def get_tasks(request):
+    """Get a list of tasks (Managers can view, Supervisors can modify)."""
+    tasks = Task.objects.all()  # All users can see tasks
+    serializer = TaskSerializer(tasks, many=True)
+    return Response(serializer.data)
  
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([permissions.IsAuthenticated])
+def task_detail(request, pk):
+    """Retrieve, update, or delete a task."""
+    try:
+        task = Task.objects.get(pk=pk)
+    except Task.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+ 
+    if hasattr(request.user, 'supervisor'):
+        # Supervisors can perform all actions
+        if request.method == 'GET':
+            serializer = TaskSerializer(task)
+            return Response(serializer.data)
+ 
+        elif request.method == 'PUT':
+            serializer = TaskSerializer(task, data=request.data)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+ 
+        elif request.method == 'DELETE':
+            task.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+ 
+    elif hasattr(request.user, 'manager'):
+        # Managers can only view the task details
+        if request.method == 'GET':
+            serializer = TaskSerializer(task)
+            return Response(serializer.data)
+        else:
+            return Response({'message': 'You do not have permission to modify this task.'}, status=status.HTTP_403_FORBIDDEN)
+ 
+    return Response({'message': 'You do not have permission to view this task.'}, status=status.HTTP_403_FORBIDDEN)
+ 
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_workers(request):
+    """Get a list of workers (Supervisors only)."""
+    if not hasattr(request.user, 'supervisor'):
+        return Response({'message': 'You do not have permission to view workers.'}, status=status.HTTP_403_FORBIDDEN)
+ 
+    workers = Worker.objects.all()
+    serializer = WorkerSerializer(workers, many=True)
+    return Response(serializer.data)
+ 
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def create_worker(request):
+    """Create a new worker (Supervisors only)."""
+    if not hasattr(request.user, 'supervisor'):
+        return Response({'message': 'You do not have permission to create a worker.'}, status=status.HTTP_403_FORBIDDEN)
+ 
+    serializer = WorkerSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+ 
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([permissions.IsAuthenticated])
+def worker_detail(request, pk):
+    """Retrieve, update, or delete a worker."""
+    try:
+        worker = Worker.objects.get(pk=pk)
+    except Worker.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+ 
+    if hasattr(request.user, 'supervisor'):
+        # Supervisors can perform all actions
+        if request.method == 'GET':
+            serializer = WorkerSerializer(worker)
+            return Response(serializer.data)
+ 
+        elif request.method == 'PUT':
+            serializer = WorkerSerializer(worker, data=request.data)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+ 
+        elif request.method == 'DELETE':
+            worker.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+ 
+    return Response({'message': 'You do not have permission to perform this action.'}, status=status.HTTP_403_FORBIDDEN)
