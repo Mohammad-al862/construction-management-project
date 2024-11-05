@@ -60,12 +60,68 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'location', 'budget', 'timeline', 'supervisor']
         extra_kwargs = {'created_by': {'read_only': True}}  # Ensure created_by is read-only
 
+from rest_framework import serializers
+from .models import Task, Worker
+ 
 class WorkerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Worker
-        fields = ['id', 'name', 'skill']
+        fields = ['id', 'name', 'token_no', 'is_available']  # Adjust as needed
+
+from rest_framework import serializers
+from .models import Task, Worker
  
 class TaskSerializer(serializers.ModelSerializer):
+    workers = serializers.ListField(child=serializers.CharField(), write_only=True)
+ 
     class Meta:
         model = Task
-        fields = ['id', 'project', 'name', 'workers', 'task_picture', 'estimated_time', 'description', 'deadline']
+        fields = ['id', 'title', 'description', 'due_date', 'project', 'image', 'workers']
+ 
+    def create(self, validated_data):
+        workers_token_no = validated_data.pop('workers', [])
+        # Check for availability of each worker by token_no
+        unavailable_workers = []
+        workers = []
+ 
+        for token in workers_token_no:
+            try:
+                worker = Worker.objects.get(token_no=token)
+                if not worker.is_available:
+                    unavailable_workers.append(worker.name)
+                else:
+                    workers.append(worker)
+            except Worker.DoesNotExist:
+                unavailable_workers.append(f"Worker with token number {token} does not exist.")
+ 
+        if unavailable_workers:
+            raise serializers.ValidationError(f"The following workers are not available: {', '.join(unavailable_workers)}")
+ 
+        # Create the task and assign available workers
+        task = Task.objects.create(**validated_data)
+        task.workers.set(workers)  # Set workers using the Worker objects
+        return task
+ 
+    def update(self, instance, validated_data):
+        workers_token_no = validated_data.pop('workers', [])
+        # Check for availability of each worker by token_no
+        unavailable_workers = []
+        workers = []
+ 
+        for token in workers_token_no:
+            try:
+                worker = Worker.objects.get(token_no=token)
+                if not worker.is_available:
+                    unavailable_workers.append(worker.name)
+                else:
+                    workers.append(worker)
+            except Worker.DoesNotExist:
+                unavailable_workers.append(f"Worker with token number {token} does not exist.")
+ 
+        if unavailable_workers:
+            raise serializers.ValidationError(f"The following workers are not available: {', '.join(unavailable_workers)}")
+ 
+        # Update task details and workers
+        instance = super().update(instance, validated_data)
+        instance.workers.set(workers)
+        return instance

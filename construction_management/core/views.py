@@ -66,14 +66,13 @@ def create_project(request):
     """Create a new project (Managers only)."""
     if not hasattr(request.user, 'manager'):
         return Response({'message': 'You do not have permission to create a project.'}, status=status.HTTP_403_FORBIDDEN)
-
+ 
     serializer = ProjectSerializer(data=request.data)
     if serializer.is_valid():
-        project = serializer.save(created_by=request.user.manager)  # Set created_by to the current manager
+        serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
-    
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+ 
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def get_projects(request):
@@ -84,6 +83,19 @@ def get_projects(request):
     projects = Project.objects.all()
     serializer = ProjectSerializer(projects, many=True)
     return Response(serializer.data)
+ 
+ 
+from rest_framework import permissions, status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+from .models import Task
+from .serializers import TaskSerializer
+ 
+from rest_framework import permissions, status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+from .models import Task
+from .serializers import TaskSerializer
  
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
@@ -96,13 +108,14 @@ def create_task(request):
     if serializer.is_valid():
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+ 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
  
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def get_tasks(request):
-    """Get a list of tasks (Managers can view, Supervisors can modify)."""
-    tasks = Task.objects.all()  # All users can see tasks
+    """Get a list of tasks (All users can see tasks)."""
+    tasks = Task.objects.all()
     serializer = TaskSerializer(tasks, many=True)
     return Response(serializer.data)
  
@@ -116,7 +129,6 @@ def task_detail(request, pk):
         return Response(status=status.HTTP_404_NOT_FOUND)
  
     if hasattr(request.user, 'supervisor'):
-        # Supervisors can perform all actions
         if request.method == 'GET':
             serializer = TaskSerializer(task)
             return Response(serializer.data)
@@ -132,15 +144,7 @@ def task_detail(request, pk):
             task.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
  
-    elif hasattr(request.user, 'manager'):
-        # Managers can only view the task details
-        if request.method == 'GET':
-            serializer = TaskSerializer(task)
-            return Response(serializer.data)
-        else:
-            return Response({'message': 'You do not have permission to modify this task.'}, status=status.HTTP_403_FORBIDDEN)
- 
-    return Response({'message': 'You do not have permission to view this task.'}, status=status.HTTP_403_FORBIDDEN)
+    return Response({'message': 'You do not have permission to perform this action.'}, status=status.HTTP_403_FORBIDDEN)
  
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
